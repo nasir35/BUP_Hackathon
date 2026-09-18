@@ -18,6 +18,11 @@ import logging
 from typing import Any, List, Optional
 
 import requests
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 from guardrails import no_op_fallback_all
 
@@ -395,12 +400,25 @@ def _strip_fences(text: str) -> str:
 
 
 def call_llm(notes: List[str], battery_capacity: float, timeout: float = 8.0) -> Optional[List[Any]]:
-    """Call an OpenAI-compatible chat completions endpoint. Returns parsed list or None on any failure."""
-    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    """Call an OpenAI or Gemini chat completions endpoint. Returns parsed list or None on any failure."""
+    gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    api_key = gemini_key or openai_key
     if not api_key:
         return None
-    base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-    model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+
+    # Auto-detect Google Gemini vs OpenAI
+    is_gemini = bool(gemini_key) or api_key.startswith("AQ.") or "generativelanguage" in os.environ.get("OPENAI_BASE_URL", "")
+
+    if is_gemini:
+        default_base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+        default_model = "gemini-3.6-flash"
+    else:
+        default_base_url = "https://api.openai.com/v1"
+        default_model = "gpt-4o-mini"
+
+    base_url = os.environ.get("OPENAI_BASE_URL", default_base_url).rstrip("/")
+    model = os.environ.get("OPENAI_MODEL", default_model)
 
     numbered = "\n".join(f"{i}: {n}" for i, n in enumerate(notes))
     user = (
@@ -411,6 +429,7 @@ def call_llm(notes: List[str], battery_capacity: float, timeout: float = 8.0) ->
     payload = {
         "model": model,
         "temperature": 0.0,
+        "max_tokens": 1000,
         "messages": [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": user},
