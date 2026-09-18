@@ -399,7 +399,7 @@ def _strip_fences(text: str) -> str:
     return s.strip()
 
 
-def call_llm(notes: List[str], battery_capacity: float, timeout: float = 8.0) -> Optional[List[Any]]:
+def call_llm(notes: List[str], battery_capacity: float, timeout: float = 15.0) -> Optional[List[Any]]:
     """Call an OpenAI or Gemini chat completions endpoint. Returns parsed list or None on any failure."""
     gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
     openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
