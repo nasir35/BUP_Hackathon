@@ -14,6 +14,9 @@ API response.
 
 from __future__ import annotations
 
+import os
+import shutil
+import sys
 from dataclasses import dataclass
 from typing import Iterable, List, Sequence
 
@@ -23,6 +26,25 @@ except ImportError as e:  # pragma: no cover
     raise RuntimeError(
         "PuLP is required. Install with `pip install pulp==2.8.0`."
     ) from e
+
+
+def _get_solver() -> pulp.PULP_CBC_CMD:
+    """Returns a configured PULP_CBC_CMD, handling serverless /tmp executable permissions."""
+    if sys.platform != "win32":
+        try:
+            default_solver = pulp.PULP_CBC_CMD(msg=False, warmStart=False)
+            cbc_path = default_solver.path
+            if cbc_path and os.path.exists(cbc_path):
+                if not os.access(cbc_path, os.X_OK):
+                    tmp_cbc = "/tmp/cbc"
+                    if not (os.path.exists(tmp_cbc) and os.access(tmp_cbc, os.X_OK)):
+                        shutil.copyfile(cbc_path, tmp_cbc)
+                        os.chmod(tmp_cbc, 0o755)
+                    return pulp.PULP_CBC_CMD(path=tmp_cbc, msg=False, warmStart=False)
+        except Exception:
+            pass
+    return pulp.PULP_CBC_CMD(msg=False, warmStart=False)
+
 
 # Local imports (these modules are pure Python and side-effect free).
 from schemas import (
@@ -207,8 +229,8 @@ def optimize_schedule(
     )
 
     # -------------------- Solve --------------------
-    # Use the bundled CBC solver. Silence solver chatter; we only need status.
-    solver = pulp.PULP_CBC_CMD(msg=False, warmStart=False)
+    # Use the bundled CBC solver (serverless-compatible).
+    solver = _get_solver()
     status = prob.solve(solver)
 
     if pulp.LpStatus[status] != "Optimal":
