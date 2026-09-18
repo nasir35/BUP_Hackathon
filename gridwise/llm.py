@@ -256,18 +256,18 @@ def _detect_no_discharge(note: str) -> Optional[dict]:
 def _detect_max_grid(note: str) -> Optional[dict]:
     if not re.search(r"grid|import|feeder|transformer|infeed|intake|substation|kWh\s*(?:of\s*)?grid", note, re.IGNORECASE):
         return None
-    if not re.search(r"cap(?:ped)?|limit(?:ed)?|maximum|max|cannot\s+exceed|not\s+(?:to\s+)?exceed|≤|<=|at most|no more than|at or below|stay below|stay at or below|under|ceiling|constrained", note, re.IGNORECASE):
+    if not re.search(r"cap(?:ped)?|limit(?:ed)?|maximum|max|cannot\s+exceed|not\s+(?:(?:to|import)\s+)?exceed|≤|<=|at most|no\s+more\s+than|not\s+(?:import\s+)?more\s+than|at or below|stay below|stay at or below|under|ceiling|constrained", note, re.IGNORECASE):
         return None
     hours = _extract_window_hours(note)
     if not hours:
         return None
     # find cap value
     cap_val: Optional[float] = None
-    m = re.search(r"(?:max(?:imum)?|cap(?:ped)?(?:\s+at)?|limit(?:ed)?(?:\s+at)?|of|≤|<=|at most|no more than|at or below|stay at or below|stay below)\s*(\d+(?:\.\d+)?)\s*(?:kWh|kwh|KWh)?", note, re.IGNORECASE)
+    m = re.search(r"(?:max(?:imum)?|cap(?:ped)?(?:\s+at)?|limit(?:ed)?(?:\s+at)?|of|≤|<=|at most|no\s+more\s+than|not\s+(?:import\s+)?more\s+than|at or below|stay at or below|stay below)\s*(\d+(?:\.\d+)?)\s*(?:kWh|kwh|KWh|kW|kw)?", note, re.IGNORECASE)
     if m:
         cap_val = float(m.group(1))
     else:
-        m = re.search(r"(\d+(?:\.\d+)?)\s*kWh", note, re.IGNORECASE)
+        m = re.search(r"(\d+(?:\.\d+)?)\s*(?:kWh|kW)\b", note, re.IGNORECASE)
         if m:
             cap_val = float(m.group(1))
     if cap_val is None:
