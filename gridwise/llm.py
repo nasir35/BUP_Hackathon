@@ -27,35 +27,42 @@ log = logging.getLogger("gridwise.llm")
 # Time-window parsing
 # ---------------------------------------------------------------------------
 
+_TIME_TOKEN = r"(?:\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)?|noon|midday|midnight)"
+
 _HOUR_PATTERNS = [
-    # 1 PM, 1pm, 1 p.m., 13:00, 13, 1 p.m
+    # 1 PM, 1pm, 1 p.m., 13:00, 13, 1 p.m, noon, midnight
     re.compile(r"\b(\d{1,2})\s*(?::\s*\d{2})?\s*(a\.?m\.?|p\.?m\.?)\b", re.IGNORECASE),
     re.compile(r"\b(\d{1,2}):\s*\d{2}\b"),
     re.compile(r"\b(\d{2})\b\s*(?=\s*(?:00|hrs|hours|o'clock))", re.IGNORECASE),
+    re.compile(r"\b(noon|midday|midnight)\b", re.IGNORECASE),
 ]
 
 _RANGE_PATTERNS = [
     # "from X to Y", "X to Y", "between X and Y", "X-Y", "X – Y", "X → Y"
     re.compile(
-        r"(?:from|between)\s+(\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)?)\s+(?:to|until|till|through|and|-)\s+(\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)?)",
+        rf"(?:from|between)\s+({_TIME_TOKEN})\s+(?:to|until|till|through|and|-)\s+({_TIME_TOKEN})",
         re.IGNORECASE,
     ),
     re.compile(
-        r"(\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)?)\s*(?:-|–|—|→|to|until)\s*(\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)?)",
+        rf"({_TIME_TOKEN})\s*(?:-|–|—|→|to|until)\s*({_TIME_TOKEN})",
         re.IGNORECASE,
     ),
 ]
 
-_SINGLE_HOUR_PATTERN = re.compile(r"\b(?:at|@)\s+(\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)?)\b", re.IGNORECASE)
+_SINGLE_HOUR_PATTERN = re.compile(rf"\b(?:at|@)\s+({_TIME_TOKEN})\b", re.IGNORECASE)
 
 
 def _parse_clock_to_24(token: str) -> Optional[int]:
-    """Parse a clock-time token like '1pm', '13:00', '9 p.m.', '7am' to hour 0..23."""
+    """Parse a clock-time token like '1pm', '13:00', '9 p.m.', '7am', 'noon', 'midnight' to hour 0..23."""
     if token is None:
         return None
     t = token.strip().lower().replace(".", "")
     if not t:
         return None
+    if t in ("noon", "midday", "12noon"):
+        return 12
+    if t in ("midnight", "12midnight"):
+        return 0
     # detect am/pm
     is_pm = "pm" in t
     is_am = "am" in t
@@ -124,44 +131,47 @@ def _detect_solar_reduction(note: str, cap: float) -> Optional[dict]:
     """Detect solar reduction. Returns directive dict or None."""
     if not re.search(r"solar|panel|photovoltaic|pv|rooftop", note, re.IGNORECASE):
         return None
-    if not re.search(r"reduc|degrad|limit|cut|drop|less|decrease|low|cloud|shad|wash|clean|inspect|down|half|quarter|frac", note, re.IGNORECASE):
+    if not re.search(r"reduc|degrad|limit|cut|drop|less|decrease|low|cloud|shad|wash|clean|inspect|down|half|quarter|frac|leave|remain|output", note, re.IGNORECASE):
         return None
     hours = _extract_window_hours(note)
     if not hours:
         return None
-    # detect fraction
-    # explicit percent: "75%", "75 percent", "75 %"
-    pct = None
-    m = re.search(r"(\d{1,3})\s*(?:%|percent)", note, re.IGNORECASE)
-    if m:
-        pct = float(m.group(1))
+
+    # detect fraction (fraction remaining)
+    factor: Optional[float] = None
+
+    if re.search(r"\bno\s+(?:usable\s+)?solar\b|\bzero\s+solar\b", note, re.IGNORECASE):
+        factor = 0.0
     else:
-        # fraction: "half" = 50%, "quarter" = 25%, "three quarters" = 75%
-        if re.search(r"\bhalf\b", note, re.IGNORECASE):
-            pct = 50.0
+        # Check if note describes fraction/percentage REMAINING:
+        # e.g., "treated as roughly 25% of the forecast", "leave about half of the forecast", "drops to 30%"
+        is_remaining = bool(re.search(
+            r"(?:treated as|roughly|about|leaves?|remain(?:ing|s)?|left at|reduced to|cut to|drops? to|down to)\s+(?:roughly\s+|about\s+)?(?:\d{1,3}\s*%|half|quarter)|(?:\d{1,3}\s*%|half|quarter)\s+of\s+(?:the\s+)?forecast",
+            note,
+            re.IGNORECASE,
+        ))
+
+        # Check explicit percentages: e.g. "25%", "80 percent"
+        m_pct = re.search(r"(\d{1,3}(?:\.\d+)?)\s*(?:%|percent)", note, re.IGNORECASE)
+        if m_pct:
+            val = float(m_pct.group(1))
+            if is_remaining or re.search(r"\b(?:to|at)\s+\d{1,3}\s*%", note, re.IGNORECASE):
+                factor = val / 100.0
+            else:
+                # e.g. "80% reduction", "cut by 30%"
+                factor = 1.0 - (val / 100.0)
+        elif re.search(r"\bhalf\b", note, re.IGNORECASE):
+            factor = 0.5
         elif re.search(r"\bquarter\b|\bone[- ]fourth\b", note, re.IGNORECASE):
-            pct = 25.0
-        elif re.search(r"\bthree[- ]quarters?\b|\bthree quarters\b", note, re.IGNORECASE):
-            pct = 75.0
-        elif re.search(r"\b(?:to|reduced to|left at|cut to)\s+(\d{1,3})\s*%\b", note, re.IGNORECASE):
-            pct = float(re.search(r"(?:to|reduced to|left at|cut to)\s+(\d{1,3})\s*%", note, re.IGNORECASE).group(1))
-    if pct is None:
-        # no percent given — try to infer reduction magnitude from wording
-        # "no solar" / "no usable solar" → 0 remaining
-        if re.search(r"\bno\s+(?:usable\s+)?solar\b|\bzero\s+solar\b", note, re.IGNORECASE):
-            return {
-                "directive_type": "solar_reduction",
-                "applies": True,
-                "structured_adjustment": {"hours": hours, "factor": 0.0},
-            }
-        # "will be cut/shrunk/reduced by X" — try to read X
-        m = re.search(r"(?:reduc(?:ed|tion)?|cut|drop|decrease)\s*(?:by|of)?\s*(\d{1,3})\s*(?:%|percent)", note, re.IGNORECASE)
-        if m:
-            pct = float(m.group(1))
-        else:
-            # generic reduction with no fraction: assume 50%
-            pct = 50.0
-    factor = max(0.0, min(1.0, 1.0 - pct / 100.0))
+            factor = 0.25 if is_remaining else 0.75
+        elif re.search(r"\bthree[- ]quarters?\b", note, re.IGNORECASE):
+            factor = 0.75 if is_remaining else 0.25
+
+    if factor is None:
+        # Generic reduction with no clear fraction: assume 50%
+        factor = 0.5
+
+    factor = max(0.0, min(1.0, factor))
     return {
         "directive_type": "solar_reduction",
         "applies": True,
@@ -173,30 +183,30 @@ def _detect_reserve(note: str, cap: float) -> Optional[dict]:
     """Detect minimum_battery_reserve (absolute kWh OR percentage)."""
     if not re.search(r"battery|reserve|storage|emergency|standby", note, re.IGNORECASE):
         return None
-    if not re.search(r"keep|maintain|reserve|hold|stor|remain|at least|minimum|≥|not (?:to )?fall|drop below", note, re.IGNORECASE):
+    if not re.search(r"keep|maintain|reserve|hold|stor|remain|at least|minimum|≥|>=|not (?:to )?fall|drop below", note, re.IGNORECASE):
         return None
     hours = _extract_window_hours(note)
     if not hours:
         return None
-    # absolute kWh: "at least 90 kWh", "minimum 100", "≥ 60 kWh"
+
     val: Optional[float] = None
-    m = re.search(r"(?:at least|minimum|min(?:imum)?|≥|>=|not less than|hold|reserve|maintain)\s*(\d+(?:\.\d+)?)\s*(?:kwh|kWh|KWH)?\b", note, re.IGNORECASE)
-    if m:
-        val = float(m.group(1))
+    # 1. Percentage check: "50% of the battery capacity", "at least 50% capacity", "keep 40%"
+    m_pct = re.search(r"(\d{1,3}(?:\.\d+)?)\s*(?:%|percent)", note, re.IGNORECASE)
+    if m_pct:
+        pct = float(m_pct.group(1)) / 100.0
+        val = pct * cap
+    elif re.search(r"\bhalf\s+(?:of\s+)?(?:the\s+)?(?:battery|capacity|charge)", note, re.IGNORECASE):
+        val = 0.5 * cap
     else:
-        m = re.search(r"(\d+(?:\.\d+)?)\s*kWh\b", note, re.IGNORECASE)
+        # 2. Absolute kWh
+        m = re.search(r"(?:at least|minimum|min(?:imum)?|≥|>=|not less than|hold|reserve|maintain|remain in the battery)\s*(\d+(?:\.\d+)?)\s*(?:kwh|kWh|KWH)?\b", note, re.IGNORECASE)
         if m:
             val = float(m.group(1))
-    # percentage
-    if val is None or val > cap * 0.9:
-        m = re.search(r"(\d{1,3})\s*(?:%|percent)\s*(?:of (?:the )?battery|capacity|charge)", note, re.IGNORECASE)
-        if m:
-            pct = float(m.group(1)) / 100.0
-            val = pct * cap
-    if val is None:
-        # heuristic: "keep half the battery" — find "half" near "battery"
-        if re.search(r"half", note, re.IGNORECASE):
-            val = 0.5 * cap
+        else:
+            m = re.search(r"(\d+(?:\.\d+)?)\s*kWh\b", note, re.IGNORECASE)
+            if m:
+                val = float(m.group(1))
+
     if val is None:
         return None
     val = max(0.0, min(cap, val))
@@ -239,23 +249,22 @@ def _detect_no_discharge(note: str) -> Optional[dict]:
 
 
 def _detect_max_grid(note: str) -> Optional[dict]:
-    if not re.search(r"grid|import|feeder|transformer|infeed|kWh\s*(?:of\s*)?grid", note, re.IGNORECASE):
+    if not re.search(r"grid|import|feeder|transformer|infeed|intake|substation|kWh\s*(?:of\s*)?grid", note, re.IGNORECASE):
         return None
-    if not re.search(r"cap(?:ped)?|limit(?:ed)?|maximum|max|cannot\s+exceed|not\s+(?:to\s+)?exceed|≤|<=|at most|no more than", note, re.IGNORECASE):
+    if not re.search(r"cap(?:ped)?|limit(?:ed)?|maximum|max|cannot\s+exceed|not\s+(?:to\s+)?exceed|≤|<=|at most|no more than|at or below|stay below|stay at or below|under|ceiling|constrained", note, re.IGNORECASE):
         return None
     hours = _extract_window_hours(note)
     if not hours:
         return None
     # find cap value
     cap_val: Optional[float] = None
-    m = re.search(r"(?:max(?:imum)?|cap(?:ped)?(?:\s+at)?|limit(?:ed)?(?:\s+at)?|of|≤|<=|at most|no more than)\s*(\d+(?:\.\d+)?)\s*(?:kWh|kwh|KWh)?", note, re.IGNORECASE)
+    m = re.search(r"(?:max(?:imum)?|cap(?:ped)?(?:\s+at)?|limit(?:ed)?(?:\s+at)?|of|≤|<=|at most|no more than|at or below|stay at or below|stay below)\s*(\d+(?:\.\d+)?)\s*(?:kWh|kwh|KWh)?", note, re.IGNORECASE)
     if m:
         cap_val = float(m.group(1))
     else:
         m = re.search(r"(\d+(?:\.\d+)?)\s*kWh", note, re.IGNORECASE)
         if m:
             cap_val = float(m.group(1))
-    # percentage cap on demand?
     if cap_val is None:
         m = re.search(r"(\d{1,3})\s*%\s*(?:of\s+)?(?:the\s+)?(?:demand|load)", note, re.IGNORECASE)
         if m:
