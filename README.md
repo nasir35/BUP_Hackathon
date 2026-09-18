@@ -8,7 +8,7 @@
 [![Pass Rate](https://img.shields.io/badge/Benchmark-10%2F10%20Passed%20(100%25)-brightgreen?style=for-the-badge)](https://github.com/nasir35/BUP_Hackathon)
 
 > **BUP CSE FEST 2026 Hackathon · Preliminary Submission**  
-> **Team:** Nasir & Pair · **Repository:** [nasir35/BUP_Hackathon](https://github.com/nasir35/BUP_Hackathon)  
+> **Team:** GridWise (Nasir, Shazid, Tawhid) · **Repository:** [nasir35/BUP_Hackathon](https://github.com/nasir35/BUP_Hackathon)  
 > **Production URL:** [https://gridwise-pi.vercel.app](https://gridwise-pi.vercel.app)  
 > **Interactive Swagger UI:** [https://gridwise-pi.vercel.app/docs](https://gridwise-pi.vercel.app/docs)  
 > **Health Check:** [https://gridwise-pi.vercel.app/health](https://gridwise-pi.vercel.app/health)  
@@ -279,4 +279,13 @@ docker run -p 8000:8000 gridwise
 
 ## Team & Acknowledgements
 
-Developed for the **BUP CSE FEST 2026 Hackathon**. Special thanks to the organizing committee and mentors for crafting this rigorous, real-world microgrid optimization challenge.
+Developed with ❤️ for the **BUP CSE FEST 2026 Hackathon**.
+
+### Team Members
+| # | Name | GitHub Profile |
+|:---:|:---|:---|
+| **1** | **Md. Nasir Ahmed** | [@nasir355](https://github.com/nasir355) |
+| **2** | **Md. Shazid Al Hasan** | [@MdShazidAlHasan](https://github.com/MdShazidAlHasan) |
+| **3** | **Tawhid Ahmmed** | [@abokash590](https://github.com/abokash590) |
+
+Special thanks to the organizing committee and mentors of BUP CSE FEST 2026 for crafting this rigorous, real-world microgrid optimization challenge.
